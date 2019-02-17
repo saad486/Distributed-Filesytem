@@ -76,7 +76,7 @@ def createFiles(sock,fileName, msg=''):
 		sock.send('EOF'.encode())
 
 #-------------------------------------------
-print("Enter the port no:\n")
+print("Welcome\n")
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.connect((HOST,clientConfig.CLIENT_CONFIG[1] ))
