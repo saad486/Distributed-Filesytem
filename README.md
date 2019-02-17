@@ -13,11 +13,11 @@ Client config: Write down the ip of server from which you have connect your clie
 6666 is the default port.
 
 Commands supported:
--ls: to list all the files.
--delete 'File': to delete the file
--upload 'File': to upload the file
--download 'File' : to download the file
--create 'File' : to create a file
+- ls: to list all the files.
+- delete 'File': to delete the file
+- upload 'File': to upload the file
+- download 'File' : to download the file
+- create 'File' : to create a file
 
 Python3 is used for coding and its environment is needed for running the code. This code is strictly for Linux file system and windows support is not given.
 
