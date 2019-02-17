@@ -10,11 +10,11 @@ import struct
 
 
 activeConnectionList = []
-connectionList = [config.SERVER_CONFIG[1]]
+connectionList = [config.SERVER_CONFIG[1],config.SERVER_CONFIG[2]]
 
-HOST = '192.168.1.103'
+HOST = config.SERVER_CONFIG[0]
 PORT = 9999
-directory = '/home/saad/preFork'
+directory = config.SERVER_CONFIG[3]
 
 listList = []
 replicatedFileList = []
@@ -47,43 +47,95 @@ class connectionReciever(threading.Thread):
 
 			###list exhange
 			msg = conn.recv(1024)
+			print(msg.decode()+'Early')
 
 			fileToBeUpdatedList  = []
+			tempList = []
+			fileTobeDeletedList = ''
 			list = msg.decode().split('\n')
 			for l in list:
 				localFileName = l.split('#')
 				if len(localFileName) > 1:
 					for x in replicatedFileList:
 						replicatedFileName = x.split('#')
-						if localFileName[0] == replicatedFileName[0] and int(localFileName[1]) != int(replicatedFileName[1]):
-							print(localFileName[0],localFileName[1], 'replication update needed')
-							fileToBeUpdatedList.append([localFileName[0],localFileName[1],replicatedFileName[1]])
+						if replicatedFileName[1] != '*':
+							if localFileName[0] == replicatedFileName[0] and int(localFileName[1]) != int(replicatedFileName[1]):
+								print(localFileName[0],localFileName[1], 'replication update needed')
+								fileToBeUpdatedList.append([localFileName[0],localFileName[1],replicatedFileName[1]])
+						elif localFileName[0] == replicatedFileName[0]:
+							fileTobeDeletedList = fileTobeDeletedList + replicatedFileName[0] + '\n'
 
-			if len(fileToBeUpdatedList) == 0:
+			fileTobeDeletedList = fileTobeDeletedList.rstrip('\n')
+			print(fileTobeDeletedList+'fileTodelete')
+			print(fileToBeUpdatedList)
+			print('A##############################')
+
+			if len(fileToBeUpdatedList) == 0 and fileTobeDeletedList == '':
 				conn.sendall('ok'.encode())
 				ret = conn.recv(1024)
 				if ret.decode() == 'send':
 					conn.sendall(localList.encode())
-			else:
-				conn.sendall('update'.encode())
-				ret = recv_one_message(conn)
-				if ret == 'send'.encode():
-					send_one_message(conn,str(len(fileToBeUpdatedList)).encode())
-					ret= recv_one_message(conn)
-					if ret == 'ok'.encode():
-						for x in fileToBeUpdatedList:
-							nameToSend = x[0]+'#'+x[1]+'\n'+x[0]+'#'+x[2]
-							send_one_message(conn,nameToSend.encode())
-							ret = recv_one_message(conn)
-							if ret == 'send'.encode():
-								f = open(directory+'/'+x[0]+'#'+x[2])
-								l = f.read(1024)
-								while (l):
-									send_one_message(conn,l.encode())
+
+			if len(fileToBeUpdatedList) > 0 or fileTobeDeletedList != '':
+
+				if len(fileToBeUpdatedList) > 0 and fileTobeDeletedList != '':
+					conn.sendall('update and delete'.encode())
+					ret = recv_one_message(conn)
+					if ret == 'send'.encode():
+						send_one_message(conn,str(len(fileToBeUpdatedList)).encode())
+						ret= recv_one_message(conn)
+						if ret == 'ok'.encode():
+							for x in fileToBeUpdatedList:
+								nameToSend = x[0]+'#'+x[1]+'\n'+x[0]+'#'+x[2]
+								send_one_message(conn,nameToSend.encode())
+								ret = recv_one_message(conn)
+								if ret == 'send'.encode():
+									f = open(directory+'/'+x[0]+'#'+x[2])
 									l = f.read(1024)
-								send_one_message(conn,'EOF'.encode())
-								f.close()
+									while (l):
+										send_one_message(conn,l.encode())
+										l = f.read(1024)
+									send_one_message(conn,'EOF'.encode())
+									f.close()
+							ret = conn.recv(1024)
+							print('ret ok',ret )
+							if ret.decode() == 'ok':
+								conn.sendall('delete'.encode())
+								ret = conn.recv(1024)
+								if ret.decode() == 'ok':
+									send_one_message(conn,fileTobeDeletedList.encode())
+							msg = recv_one_message(conn)
+
+				elif len(fileToBeUpdatedList) > 0:
+					print('update m ho')
+					conn.sendall('update'.encode())
+					ret = recv_one_message(conn)
+					if ret == 'send'.encode():
+						send_one_message(conn,str(len(fileToBeUpdatedList)).encode())
+						ret= recv_one_message(conn)
+						if ret == 'ok'.encode():
+							for x in fileToBeUpdatedList:
+								nameToSend = x[0]+'#'+x[1]+'\n'+x[0]+'#'+x[2]
+								send_one_message(conn,nameToSend.encode())
+								ret = recv_one_message(conn)
+								if ret == 'send'.encode():
+									f = open(directory+'/'+x[0]+'#'+x[2])
+									l = f.read(1024)
+									while (l):
+										send_one_message(conn,l.encode())
+										l = f.read(1024)
+										send_one_message(conn,'EOF'.encode())
+									f.close()
 						msg = recv_one_message(conn)
+
+				elif fileTobeDeletedList != '':
+					print('Delete')
+					conn.sendall('delete'.encode())
+					ret = recv_one_message(conn)
+					if ret == 'send'.encode():
+						send_one_message(conn,fileTobeDeletedList.encode())
+					msg = recv_one_message(conn)
+
 
 			listListLock.acquire()
 			listList.append([conn,msg.decode(),addr[0]])
@@ -139,11 +191,25 @@ class communtionRecieverThread(threading.Thread):
 					f.write(data)
 				f.close()
 				listRecieve = recv_one_message(self.conn)
+				updateIntoList(self.conn, listRecieve.decode())
 				localListUpdate()
 				self.conn.sendall('ls'.encode())
 				time.sleep(3)
 				self.conn.sendall(localList.encode())
 				print('done done')
+
+				removeList = []
+				check = False
+				for x in replicatedFileList:
+					listx = x.split('#')
+					if listx[0] == list[1] and listx[1] == '*':
+						removeList = x
+						check = True
+						break
+				if check == True:
+					replicatedFileListLock.acquire(True)
+					replicatedFileList.remove(removeList)	###removing * files
+					replicatedFileListLock.release()
 
 				replicatedFileListLock.acquire(True)
 				replicatedFileList.append(list[1] +'#'+str(0))	###Keeping track of replicated files
@@ -152,6 +218,20 @@ class communtionRecieverThread(threading.Thread):
 				sendReplicatedListOther(self.conn)
 
 			if list[0] == 'upload':
+				######################33
+				removeList = []
+				check = False
+				for x in replicatedFileList:
+					listx = x.split('#')
+					if listx[0] == list[1] and listx[1] == '*':
+						removeList = x
+						check = True
+						break
+				if check == True:
+					replicatedFileListLock.acquire(True)
+					replicatedFileList.remove(removeList)	###removing * files
+					replicatedFileListLock.release()
+				##########################################################3
 				os.remove(directory+'/'+list[1])
 				fileStip = list[1].split('#')
 				version = int(fileStip[1]) + 1
@@ -167,28 +247,63 @@ class communtionRecieverThread(threading.Thread):
 					f.write(data)
 				f.close()
 				listRecieve = recv_one_message(self.conn)
+				updateIntoList(self.conn, listRecieve.decode())
+
 				localListUpdate()
 				self.conn.sendall('ls'.encode())
 				time.sleep(3)
 				self.conn.sendall(localList.encode())
 				print('done done')
+				sendReplicatedListOther(self.conn)
+
 
 			if list[0] == 'sendOther':
 				listRecieve = recv_one_message(self.conn)
+				updateIntoList(self.conn, listRecieve.decode())
 				localListUpdate()
 				self.conn.sendall('ls'.encode())
 				time.sleep(3)
 				self.conn.sendall(localList.encode())
 				print('done')
 
-			elif list[0] == 'download':
-				f = open(directory+'/'+list[1],'rb')
-				l = f.read(1024)
-				while (l):
-					self.conn.send(l)
-					l = f.read(1024)
-				self.conn.send('EOF'.encode())
-				f.close()
+			if list[0] == 'delete':
+				isReplicated = False
+				fileName = ''
+				for x in replicatedFileList:
+					if list[1] == x:
+						isReplicated = True
+						fileName = x
+						break
+
+				if isReplicated == True:
+					os.remove(directory+'/'+fileName)
+					deleteStrip = fileName.split('#')
+					replicatedFileListLock.acquire(True)
+					replicatedFileList.remove(fileName)
+					replicatedFileList.append(deleteStrip[0]+'#'+'*')
+					replicatedFileListLock.release()
+
+				localListUpdate()
+				listRecieve = recv_one_message(self.conn)
+				updateIntoList(self.conn, listRecieve.decode())
+				self.conn.sendall('ls'.encode())
+				time.sleep(3)
+				self.conn.sendall(localList.encode())
+				sendReplicatedListOther(self.conn)
+#---------------------------------------------------------------------
+def updateIntoList(conn, recieveList):
+	removeL = []
+	for y in listList:
+		if y[0] == conn:
+			removeL = y
+			ipAddr = y[2]
+			break
+
+	listListLock.acquire(True)
+	listList.remove(removeL)
+	listList.append([conn,recieveList,ipAddr])
+	listListLock.release()
+
 #-----------------------------------------------------------------------
 class createReplicationThread(threading.Thread):
 	def __init__(self, command):
@@ -248,6 +363,17 @@ class updateReplicatedFiles(threading.Thread):
 			for x in activeConnectionList:
 				x[2].sendall(self.command.encode())
 				sendFile(self.fileName+'#'+str(versionUpdate),x[2])
+				send_one_message(x[2],localList.encode())
+
+#--------------------------------------------------------------------------------
+class deleteReplicatedFiles(threading.Thread):
+		def __init__(self, command):
+			threading.Thread.__init__(self)
+			self.command = command
+
+		def run(self):
+			for x in activeConnectionList:
+				x[2].sendall(self.command.encode())
 				send_one_message(x[2],localList.encode())
 
 #------------------------------------------------------------------------
@@ -341,7 +467,10 @@ def download(fileName, conn, systemList):
 	print(systemList, 'listing')
 	list = fileFinding(fileName, systemList)
 	print(list,'download')
-	if len(list) > 1:
+	if len(list)==0:
+		conn.sendall('No such file exists'.encode())
+
+	elif len(list) > 1:
 		print('Sending request',list[1])
 		conn.send('Not local'.encode())
 		ret = conn.recv(1024)
@@ -393,6 +522,7 @@ def createFile(fileName, conn):
 	f.close()
 #--------------------------------------------------------
 def sendFile(fileName, conn):
+	time.sleep(2)
 	f = open(directory+'/'+fileName,'rb')
 	l = f.read(1024)
 	while(l):
@@ -422,6 +552,7 @@ def recvall(sock, count):
     return buf
 #------------------------------------------------
 def removeFromReplicatedList(removeFile, addFile):
+
 	removeIndex = ''
 	for x in replicatedFileList:
 		if x == removeFile:
@@ -434,6 +565,16 @@ def removeFromReplicatedList(removeFile, addFile):
 
 
 #-----------------------------------------------
+def replicationListUpdate():
+	oslist = os.listdir(directory)
+	for l in oslist:
+		list = l.split('#')
+		if len(list)>1:
+			replicatedFileListLock.acquire(True)
+			replicatedFileList.append(l)
+			replicatedFileListLock.release()
+
+#------------------------------------------------
 ####Lists variable##############################
 localList = ''
 #############################
@@ -442,6 +583,10 @@ localList = ''
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 localListUpdate()
+
+replicationListUpdate()
+
+print(replicatedFileList)
 
 try:
 	thread1 = connectionReciever(sock)
@@ -477,7 +622,8 @@ for soc in connectionList:
 			server.sendall(localList.encode())
 			msg = server.recv(1024)
 			print(msg)
-			if msg.decode() == 'update':
+
+			if msg.decode() == 'update and delete':
 				send_one_message(server,'send'.encode())
 				le = recv_one_message(server)
 				send_one_message(server,'ok'.encode())
@@ -500,10 +646,102 @@ for soc in connectionList:
 					replicatedFileList.append(listOfFiles[1])
 					replicatedFileListLock.release()
 
+				server.sendall('ok'.encode())
+
+				ret = server.recv(1024)
+
+				if ret.decode() == 'delete':
+					server.sendall('ok'.encode())
+					listOfDeleted = recv_one_message(server)
+					list = listOfDeleted.decode().split('\n')
+					for x in list:
+						removeList = []
+						for y in replicatedFileList:
+							listx = y.split('#')
+							if listx[0] == x:
+								os.remove(directory+'/'+y)
+								removeList = y
+								break
+
+						replicatedFileListLock.acquire(True)
+						replicatedFileList.remove(removeList)
+						replicatedFileListLock.release()
 				localListUpdate()
+				listListLock.acquire()
+				listList.append([server,msg.decode(),soc])
+				listListLock.release()
+				#
+				#
+
+				# 	server.sendall('ok'.encode())
+				# 	listOfDeleted = recv_one_message(server)
+				# 	list = listOfDeleted.decode.split('\n')
+				# 	for x in list:
+				# 		removeList = []
+				# 		for y in replicatedFileList:
+				# 			listx = y.split('#')
+				# 			if listx[0] == x:
+				# 				os.remove(directory+'/'+y)
+				# 				removeList = y
+				# 				break
+				 		# replicatedFileListLock.acquire(True)
+						# replicatedFileList.remove(removeList)
+						# replicatedFileListLock.release()
+
+				#localListUpdate()
 
 				send_one_message(server,localList.encode())
 
+			elif msg.decode() == 'update':
+				send_one_message(server,'send'.encode())
+				le = recv_one_message(server)
+				send_one_message(server,'ok'.encode())
+				for x in range(0,int(le.decode())):
+					listOfName = recv_one_message(server)
+					listOfFiles = listOfName.decode().split('\n')
+					os.remove(directory+'/'+listOfFiles[0])
+					f = open(directory+'/'+listOfFiles[1],'wb')
+					send_one_message(server,'send'.encode())
+					while True:
+						data = recv_one_message(server)
+						print('repl',data)
+						if data.endswith('EOF'.encode()):
+							data = data[:-3]
+							f.write(data)
+							break
+						f.write(data)
+					f.close()
+					localListUpdate()
+					replicatedFileListLock.acquire(True)
+					replicatedFileList.append(listOfFiles[1])
+					replicatedFileListLock.release()
+					localListUpdate()
+					listListLock.acquire()
+					listList.append([server,msg.decode(),soc])
+					listListLock.release()
+					send_one_message(server,localList.encode())
+
+			elif msg.decode() == 'delete':
+				send_one_message(server,'send'.encode())
+				listOfDeleted = recv_one_message(server)
+				list = listOfDeleted.decode().split('\n')
+				for x in list:
+					removeList = []
+					for y in replicatedFileList:
+						listx = y.split('#')
+						if listx[0] == x:
+							os.remove(directory+'/'+y)
+							removeList = y
+							break
+
+					replicatedFileListLock.acquire(True)
+					replicatedFileList.remove(removeList)
+					replicatedFileListLock.release()
+				localListUpdate()
+				listListLock.acquire()
+				listList.append([server,msg.decode(),soc])
+				listListLock.release()
+				send_one_message(server,localList.encode())
 
 			elif msg.decode() == 'ok':
 				server.sendall('send'.encode())
@@ -538,40 +776,175 @@ while True:
 
 			append = ''
 
-
 			for x in listList:
-				append = append + x[1]
+				list = x[1].split('\n')
+				for y in list:
+					listsplity = y.split('#')
+					if len(listsplity) > 1:
+						pass
+					else: append = append + listsplity[0] + '\n'
+				append = append.rstrip('\n')
+				append = append + '\n'
+			#append = append + '\n'
 
-			append = append + localList
+			listSplit = localList.split('\n')
+			for x in listSplit:
+				sendList = x.split('#')
+				append = append + sendList[0] + '\n'
+
+			append = append.rstrip('\n')
 
 			conn.send(append.encode())
 
-		if commandList[0] == 'download':
-			download(commandList[1],conn, localList)
+		elif commandList[0] == 'download':
+			isReplicated = False
+			for x in replicatedFileList:
+				list = x.split('#')
+				if list[0] == commandList[1]:
+					fileName = x
+					isReplicated = True
+					break
+			if isReplicated == True:
+				download(fileName,conn, localList)
+			else:
+				download(commandList[1],conn, localList)
+
 			print('File sent')
 
-		if commandList[0] == 'create':
+		elif commandList[0] == 'create':
 			createFile(commandList[1]+'#'+str(0),conn)
-			print('Done local replication')
+			####################################
+			removeList = []
+			check = False
+			for x in replicatedFileList:
+				listx = x.split('#')
+				if listx[0] == commandList[1] and listx[1] == '*':
+					removeList = x
+					check = True
+					break
+			if check == True:
+				replicatedFileListLock.acquire(True)
+				replicatedFileList.remove(removeList)	###removing * files
+				replicatedFileListLock.release()
+
+			###################################################33
 
 			localListUpdate()
 			###Thread here####################
 			threadReplication = createReplicationThread(data.decode())
 			threadReplication.start()
 
-		if commandList[0] == 'upload':
-			print('Upload command')
-			uploadStrip = commandList[1].split('#')
-			print(uploadStrip)
-			version = -1
-			if len(uploadStrip)>1:
-				print('here')
-				os.remove(directory+'/'+commandList[1])
-				version = int(uploadStrip[1])
-				createFile(uploadStrip[0]+'#'+str(version + 1),conn)
-				localListUpdate()
-				threadReplicationUpdation = updateReplicatedFiles(data.decode(),uploadStrip[0],version)
-				threadReplicationUpdation.start()
-				print('file uploaded')
+		elif commandList[0] == 'delete':
+			print('delete command')
+			isReplicated = False
+			fileName = ''
 
-			else: pass#upload(commandList[1],conn)
+			for x in replicatedFileList:
+				splitName = x.split('#')
+				if splitName[0] == commandList[1]:
+					isReplicated = True
+					fileName = x
+					break
+
+			if isReplicated == True:
+				conn.sendall('Local'.encode())
+				ret = conn.recv(1024)
+				if ret == 'ok'.encode():
+					deleteStrip = fileName.split('#')
+					os.remove(directory+'/'+fileName)
+					localListUpdate()
+					replicatedFileListLock.acquire(True)
+					replicatedFileList.remove(fileName)
+					replicatedFileList.append(deleteStrip[0]+'#'+'*')
+					replicatedFileListLock.release()
+					thread = deleteReplicatedFiles('delete '+fileName)
+					thread.start()
+					print('file uploaded')
+
+			else:
+				list = fileFinding(commandList[1],localList)
+
+				if len(list)==0:
+					conn.sendall('No such file exists'.encode())
+
+				elif len(list) > 1:
+					conn.sendall('Not local'.encode())
+					ret = conn.recv(1024)
+					if ret == 'ok'.encode():
+						conn.sendall(list[1].encode())
+				else:
+					conn.sendall('Local'.encode())
+					ret = conn.recv(1024)
+					if ret.decode() == 'ok':
+						os.remove(directory+"/"+commandList[1])
+						localListUpdate()
+						for x in  activeConnectionList:
+							x[2].sendall(data)
+							ret = x[2].recv(1024)
+							if ret.decode() == 'ok':
+								send_one_message(x[2],localList.encode())
+
+
+
+		elif commandList[0] == 'upload':
+			######################33
+			removeList = []
+			check = False
+			for x in replicatedFileList:
+				listx = x.split('#')
+				if listx[0] == commandList[1] and listx[1] == '*':
+					removeList = x
+					check = True
+					break
+			if check == True:
+				replicatedFileListLock.acquire(True)
+				replicatedFileList.remove(removeList)	###removing * files
+				replicatedFileListLock.release()
+			##########################################################3
+			print('Upload command')
+			isReplicated = False
+			fileName = ''
+
+			for x in replicatedFileList:
+				splitName = x.split('#')
+				if splitName[0] == commandList[1]:
+					isReplicated = True
+					fileName = x
+					break
+
+
+			if isReplicated == True:
+				conn.sendall('Local'.encode())
+				ret = conn.recv(1024)
+				if ret == 'ok'.encode():
+					uploadStrip = fileName.split('#')
+					version = -1
+					print('here')
+					os.remove(directory+'/'+fileName)
+					version = int(uploadStrip[1])
+					createFile(uploadStrip[0]+'#'+str(version + 1),conn)
+					localListUpdate()
+					threadReplicationUpdation = updateReplicatedFiles('upload '+fileName,uploadStrip[0],version)
+					threadReplicationUpdation.start()
+					print('file uploaded')
+
+			else:
+				list = fileFinding(commandList[1],localList)
+
+				if len(list)==0:
+					conn.sendall('No such file exists'.encode())
+
+				elif len(list) > 1:
+					conn.sendall('Not local'.encode())
+					ret = conn.recv(1024)
+					if ret == 'ok'.encode():
+						conn.sendall(list[1].encode())
+
+				else:
+					conn.sendall('Local'.encode())
+					ret = conn.recv(1024)
+					if ret.decode() == 'ok':
+						upload(commandList[1], conn)
+
+		else:
+			conn.sendall('Wrong Command! Please try again :)'.encode())
